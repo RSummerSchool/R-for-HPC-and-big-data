@@ -1,0 +1,45 @@
+---
+title: "Using the databricks community cloud"
+output: html_notebook
+---
+
+If you choose to run in a cloud environment (databricks community cloud) sparkR needs to be installed. However `ìnstall.packages("SparkR")` will fail, as the **SparkR** package is not uploaded to CRAN. You need to follow the installation instructions here: https://github.com/apache/spark/tree/master/R for manual installation. You can follow https://issues.apache.org/jira/browse/SPARK-15799 to find out if SparkR is available now from CRAN.
+
+See https://databricks.com/blog/2017/05/25/using-sparklyr-databricks.html for general instructions of using sparkR/sparklyR with databricks.
+
+> Note, the instructions to install sparkR might be incomplete.
+
+To install SparkR make sure to have these R packages installed
+```{r, eval=FALSE, include=TRUE}
+install.packages('testthat', repos=c('https://cloud.r-project.org'))
+install.packages('roxygen2', repos=c('https://cloud.r-project.org'))
+```
+Then build spark including the SparkR package from source. The following code snippet assumes that `git` and `maven` are installed an on the `$PATH`
+```{bash, eval=FALSE, include=TRUE}
+git clone https://github.com/apache/spark.git
+cd spark
+git checkout v2.2.0
+export MAVEN_OPTS="-Xmx2g -XX:ReservedCodeCacheSize=512m"
+./dev/make-distribution.sh --name my-spark --tgz -Psparkr -Phadoop-2.7 -Phive -Phive-thriftserver -Pmesos -Pyarn -Pnetlib-lgpl
+```
+install the freshly built R package:
+```{bash, eval=FALSE, include=TRUE}
+# where /home/username/R is where R is installed and /home/username/R/bin contains the files R and RScript
+export R_HOME=/home/username/R
+./install-dev.sh
+```
+and use it via:
+```{bash, eval=FALSE, include=TRUE}
+# Set this to where Spark is installed
+Sys.setenv(SPARK_HOME="/Users/username/spark")
+# This line loads SparkR from the installed directory
+.libPaths(c(file.path(Sys.getenv("SPARK_HOME"), "R", "lib"), .libPaths()))
+library(SparkR)
+sparkR.session()
+```
+
+Finally, it should be possible to use sparklyR with databricks like:
+```{r, eval=FALSE, include=TRUE}
+# cloud spark https://databricks.com/blog/2017/05/25/using-sparklyr-databricks.html
+# spark <- spark_connect(method = "databricks") # that also requires sparkR to be installed
+```
