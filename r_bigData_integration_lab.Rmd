@@ -53,7 +53,7 @@ spark_install(version = "2.2.0", hadoop_version = "2.7")
 then connect:
 ```{r}
 # local spark
-spark <- spark_connect(master = "local", version = "2.1.1")
+spark <- spark_connect(master = "local", version = "2.2.0")
 
 # cloud spark https://databricks.com/blog/2017/05/25/using-sparklyr-databricks.html
 # spark <- spark_connect(method = "databricks") # that also requires sparkR to be installed
@@ -126,7 +126,45 @@ iris_preview <- dbGetQuery(spark, "SELECT * FROM iris LIMIT 10")
 iris_preview
 ```
 
-### exercise 4 - simple machine learning LM
+### custom R code as udf 4
+Stop the spark session:
+```{r}
+spark_disconnect(spark)
+```
+
+Start spark with custom configuration which allows for more memory:
+```{r}
+# more memory as suggested in https://github.com/rstudio/sparklyr/issues/783
+config <- spark_config()
+config[["sparklyr.shell.driver-memory"]] <- "4G"
+spark <- sparklyr::spark_connect(version='2.1.1', 
+                                 hadoop_version = '2.7',
+                                 master = "local",
+                                 config = config)
+```
+
+Write a user defined function which executes custom R code from spark.
+```[r]
+iris_tbl <- sdf_copy_to(sc, iris)
+iris_tbl %>% spark_apply(function(e) sapply(e[,1:4], jitter))
+```
+
+Assume you have a big data set and for each group you want to compute an aggregation. In general this is rather easy via sparklyr or the sql api. However, when you want to fit a model, i.e. a more complex and non standard aggregation it gets a bit more complicated.
+
+fit a model per group in the dataset
+```[r]
+spark_apply(
+  iris_tbl,
+  function(e) broom::tidy(lm(Petal_Width ~ Petal_Length, e)),
+  names = c("term", "estimate", "std.error", "statistic", "p.value"),
+  group_by = "Species"
+)
+```
+> Note: accoring to microsoft, their (commercial R Version) https://blogs.msdn.microsoft.com/rserver/2017/05/04/performance-rxexecby-vs-gapply-on-spark/ offers better performance for such operations
+
+### exercise 5 - simple machine learning LM
+What is the difference between R`s model fit (exercise 4) and sparks models?
+
 - some of sparks ML functionality is accessible
 - additionally h20.ai`s `rsparkling` provides ML methods on top of `sparklyR`
 
@@ -152,12 +190,9 @@ fit <- partitions$training %>%
 
 summary(fit)
 ```
-Finally, stop the spark session:
-```{r}
-spark_disconnect(spark)
-```
 
-### exercise 5 - apply tidyR to spark data frames
+
+### exercise 6 - apply tidyR to spark data frames
 Let's add `replyr` to the mix. This acronym stands for: REmote PLYing of big data for R. It lets you take a number of common working patterns and apply them to remote data, i.e. makes packages like `tidyR` compatible with spark.
 
 For this excercise make sure to use the latest (dev) versions of sparklyr. 
@@ -165,18 +200,6 @@ For this excercise make sure to use the latest (dev) versions of sparklyr.
 Load replyr:
 ```{r}
 library(replyr)
-```
-
-
-Start spark with custom configuration which allows for more memory:
-```{r}
-# more memory as suggested in https://github.com/rstudio/sparklyr/issues/783
-config <- spark_config()
-config[["sparklyr.shell.driver-memory"]] <- "4G"
-spark <- sparklyr::spark_connect(version='2.1.1', 
-                                 hadoop_version = '2.7',
-                                 master = "local",
-                                 config = config)
 ```
 
 create a spark dataframe from mtcars and compute the summary:
@@ -220,43 +243,6 @@ mtcars2 %>%
 ```
 
 These additional functionality might be integrated directly into sparklyr in the future.
-
-### exercise 6 - apply function to each group
-Assume you have a big data set and for each group you want to compute an aggregation. In general this is rather easy via sparklyr or the sql api. However, when you want to fit a model, i.e. a more complex and non standard aggregation it gets a bit more complicated.
-With standard sparklr this does not yet work: https://github.com/rstudio/sparklyr/issues/770 If you were using native (java, scala) spark you could write a custom UADF. This is not possible from R.
-sparkR however offers `gapply` to handle working with groups. 
-
-With replyr there is a new possibility to integrate the functionality of `gapply` into sparklyr. **dplyr::do** for local data is made compatible with spark.
-
-The sample takes a few rows from each group of a grouped data set.
-```{r}
-by_cyl <- group_by(mtcars, cyl)
-do(by_cyl, head(., 2))
-```
-
-Let's apply this pattern to spark:
-```{r}
-by_cyl <- group_by(mtcars_spark, cyl)
-do(by_cyl, head(., 2))
-```
-But as you see the result is not really useful.
-With replyr this is possible:
-
-```{r}
-mtcars_spark %>%
-  replyr_split('cyl', 
-               partitionMethod = 'extract') %>%
-  lapply(function(di) head(di, 2)) %>%
-  replyr_bind_rows()
-
-mtcars_spark %>%
-  gapply('cyl',
-         partitionMethod = 'extract',
-         function(di) head(di, 2))
-```
-
-
-> Note: accoring to microsoft, their (commercial R Version) https://blogs.msdn.microsoft.com/rserver/2017/05/04/performance-rxexecby-vs-gapply-on-spark/ offers better performance for such operations
 
 To conclude the lab let's stop spark
 ```{r}
