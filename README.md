@@ -6,4 +6,7 @@ The slides can be found here https://docs.google.com/presentation/d/1VgocCul4ZyL
 
 Here is the sample code for the lab
 - [lab code](r_bigData_integration_lab_questions.Rmd)
-- [solution to the lab code](r_bigData_integration_lab.Rmd)
+- [solution to the lab code](r_bigData_integration_lab.Rm)
+
+# TODO
+ update lab exercises

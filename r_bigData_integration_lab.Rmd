@@ -53,7 +53,7 @@ spark_install(version = "2.2.0", hadoop_version = "2.7")
 then connect:
 ```{r}
 # local spark
-spark <- spark_connect(master = "local", version = "2.2.0")
+spark <- spark_connect(master = "local")
 
 # cloud spark https://databricks.com/blog/2017/05/25/using-sparklyr-databricks.html
 # spark <- spark_connect(method = "databricks") # that also requires sparkR to be installed
@@ -81,9 +81,9 @@ batting_tbl <- spark_read_csv(spark, "batting", "batting.csv", header = TRUE,
                               infer_schema = TRUE, delimiter = ",", quote = "\"", escape = "\\",
                               charset = "UTF-8", null_value = "NA", options = list(),
                               repartition = 2, memory = TRUE, overwrite = TRUE)
-batting_tbl <- copy_to(spark,Lahman::Batting,"batting")
+# batting_tbl <- copy_to(spark,Lahman::Batting,"batting")
 ```
-show all spark data frames i.e. tables
+show all spark data frames i.e. show a list of all created tables
 ```{r}
 src_tbls(spark)
 ```
@@ -126,45 +126,7 @@ iris_preview <- dbGetQuery(spark, "SELECT * FROM iris LIMIT 10")
 iris_preview
 ```
 
-### custom R code as udf 4
-Stop the spark session:
-```{r}
-spark_disconnect(spark)
-```
-
-Start spark with custom configuration which allows for more memory:
-```{r}
-# more memory as suggested in https://github.com/rstudio/sparklyr/issues/783
-config <- spark_config()
-config[["sparklyr.shell.driver-memory"]] <- "4G"
-spark <- sparklyr::spark_connect(version='2.1.1', 
-                                 hadoop_version = '2.7',
-                                 master = "local",
-                                 config = config)
-```
-
-Write a user defined function which executes custom R code from spark.
-```[r]
-iris_tbl <- sdf_copy_to(sc, iris)
-iris_tbl %>% spark_apply(function(e) sapply(e[,1:4], jitter))
-```
-
-Assume you have a big data set and for each group you want to compute an aggregation. In general this is rather easy via sparklyr or the sql api. However, when you want to fit a model, i.e. a more complex and non standard aggregation it gets a bit more complicated.
-
-fit a model per group in the dataset
-```[r]
-spark_apply(
-  iris_tbl,
-  function(e) broom::tidy(lm(Petal_Width ~ Petal_Length, e)),
-  names = c("term", "estimate", "std.error", "statistic", "p.value"),
-  group_by = "Species"
-)
-```
-> Note: accoring to microsoft, their (commercial R Version) https://blogs.msdn.microsoft.com/rserver/2017/05/04/performance-rxexecby-vs-gapply-on-spark/ offers better performance for such operations
-
-### exercise 5 - simple machine learning LM
-What is the difference between R`s model fit (exercise 4) and sparks models?
-
+### exercise 4 - simple machine learning LM
 - some of sparks ML functionality is accessible
 - additionally h20.ai`s `rsparkling` provides ML methods on top of `sparklyR`
 
@@ -190,61 +152,60 @@ fit <- partitions$training %>%
 
 summary(fit)
 ```
-
-
-### exercise 6 - apply tidyR to spark data frames
-Let's add `replyr` to the mix. This acronym stands for: REmote PLYing of big data for R. It lets you take a number of common working patterns and apply them to remote data, i.e. makes packages like `tidyR` compatible with spark.
-
-For this excercise make sure to use the latest (dev) versions of sparklyr. 
-
-Load replyr:
+Finally, stop the spark session:
 ```{r}
-library(replyr)
+spark_disconnect(spark)
 ```
 
-create a spark dataframe from mtcars and compute the summary:
-```{r}
-mtcars_spark <- copy_to(spark, mtcars)
-# gives summary of handle, not data
-summary(mtcars_spark)
+### exercise 5 - UDF
+Define a user defined function (colsure) to execute custom R code via spark.
 
-# replyr_summary works
-replyr_summary(mtcars_spark)
-replyr_summary(mtcars_spark) %>%
-  select(-lexmin, -lexmax, -nunique, -index)
+```{r}
+iris_tbl %>% spark_apply(function(e) sapply(e[,1:4], jitter))
+```
+and also add the result as an additional column:
+```{r}
+iris_tbl %>%
+  spark_apply(
+    function(e) data.frame(2 * e$Sepal_Length, e),
+    names = c("2xS_len", colnames(iris_tbl)))
 ```
 
-use tidyverse to cleanup the data set. The index contains the names of the cars. Create an additional column to cleanly hold the properties of the index
+### exercise 6 - grouped UDF (UADF) and spark configuration
+Define a custom function of R code which is executed on one data frame and learn how to start spark with custom settings i.e. more memory.
+
+Start spark with custom configuration which allows for more memory:
 ```{r}
-mtcars
-mtcars %>%
-  mutate(car = row.names(mtcars))
+# more memory as suggested in https://github.com/rstudio/sparklyr/issues/783
+config <- spark_config()
+config[["sparklyr.shell.driver-memory"]] <- "2G"
+spark <- sparklyr::spark_connect(version='2.2.0', 
+                                 hadoop_version = '2.7',
+                                 master = "local",
+                                 config = config)
 ```
 
-When adding spark into the mix the *standard* tidyR code will fail in the beginning:
+Assume you have a big data set and for each group you want to compute an aggregation. In general this is rather easy via sparklyr or the SQL API for standard SQL aggregations (mean,sum,count).
+However, when you want to fit a model, i.e. a more complex and non standard aggregation it gets a bit more complicated.
+If you were using native (java, scala) spark you could write a custom UADF. This is not possible from R.
+sparkR however offers `gapply` to handle working with groups. 
+Recently, sparklyr introduced `sapply` which also can operate on grouped datasets which easily allows to scale out computation i.e. paralellize it per each group.
+
+Compute a linear model for the iris dataset for each group of species.
 ```{r}
-mtcars2 <- mtcars %>%
-  mutate(car = row.names(mtcars)) %>%
-  copy_to(spark, ., 'mtcars2')
-
-# errors out
-mtcars2 %>% 
-  tidyr::gather('fact', 'value')
+iris_tbl <- copy_to(spark,iris)
+spark_apply(
+  iris_tbl,
+  function(e) broom::tidy(lm(Petal_Width ~ Petal_Length, e)),
+  names = c("term", "estimate", "std.error", "statistic", "p.value"),
+  group_by = "Species"
+)
 ```
-
-but with replyr this can be handled:
-```{r}
-mtcars2 %>%
-  replyr_moveValuesToRows(nameForNewKeyColumn= 'fact', 
-                          nameForNewValueColumn= 'value', 
-                          columnsToTakeFrom= colnames(mtcars),
-                          nameForNewClassColumn= 'class') %>%
-  arrange(car, fact)
-```
-
-These additional functionality might be integrated directly into sparklyr in the future.
+> Note: as outlined here https://spark.rstudio.com/articles/guides-distributed-r.html you need to extract tabular names from the output of the function in order to properly *view* a result. Broom from the tidy universe is a good tool for this.
 
 To conclude the lab let's stop spark
 ```{r}
 spark_disconnect(spark)
 ```
+
+For further inspiration visit https://spark.rstudio.com which outline how to use i.e. window functions and much more functionality.
